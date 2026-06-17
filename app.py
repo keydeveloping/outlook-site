@@ -10,9 +10,12 @@ from collections import OrderedDict
 from functools import wraps
 from urllib.parse import urlencode
 
-# Load .env file before importing/read other env vars
-from dotenv import load_dotenv
-load_dotenv(os.path.join(os.path.dirname(__file__), '.env'))
+# Load .env file for local development when python-dotenv is installed.
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.path.dirname(__file__), '.env'))
+except ImportError:
+    pass
 
 import requests
 from flask import Flask, render_template, jsonify, request, redirect, session, url_for
