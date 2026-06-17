@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Mail inbox">
+  <rect width="64" height="64" rx="14" fill="#0078d4"/>
+  <rect x="12" y="18" width="40" height="30" rx="4" fill="#ffffff"/>
+  <path d="M14 21l18 14 18-14" fill="none" stroke="#0078d4" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M14 46l14-12m22 12L36 34" fill="none" stroke="#0078d4" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="48" cy="16" r="8" fill="#50e6ff"/>
+</svg>
