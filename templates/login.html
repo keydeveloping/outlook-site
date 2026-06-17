@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login — Email Inbox</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0d1117;
+            color: #c9d1d9;
+            height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .login-container {
+            width: 100%;
+            max-width: 400px;
+            padding: 20px;
+        }
+
+        .login-card {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 12px;
+            padding: 40px 32px;
+        }
+
+        .login-header {
+            text-align: center;
+            margin-bottom: 32px;
+        }
+
+        .login-icon {
+            width: 56px;
+            height: 56px;
+            background: rgba(88, 166, 255, 0.12);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 16px;
+            font-size: 24px;
+        }
+
+        .login-header h1 {
+            font-size: 20px;
+            font-weight: 600;
+            color: #f0f6fc;
+            margin-bottom: 4px;
+        }
+
+        .login-header p {
+            font-size: 13px;
+            color: #8b949e;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 12px;
+            font-weight: 600;
+            color: #8b949e;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 10px 14px;
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            color: #c9d1d9;
+            font-size: 14px;
+            font-family: inherit;
+            transition: border-color 0.15s ease;
+            outline: none;
+        }
+
+        .form-group input:focus {
+            border-color: #58a6ff;
+            box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.15);
+        }
+
+        .form-group input::placeholder {
+            color: #484f58;
+        }
+
+        .form-group input:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .login-btn {
+            width: 100%;
+            padding: 10px;
+            background: #238636;
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            font-family: inherit;
+            cursor: pointer;
+            transition: background 0.15s ease;
+            margin-top: 8px;
+        }
+
+        .login-btn:hover:not(:disabled) {
+            background: #2ea043;
+        }
+
+        .login-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .login-btn.loading {
+            position: relative;
+            color: transparent;
+        }
+
+        .login-btn.loading::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 18px;
+            height: 18px;
+            margin: -9px 0 0 -9px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .error-message {
+            background: rgba(218, 54, 51, 0.1);
+            border: 1px solid rgba(218, 54, 51, 0.3);
+            color: #f85149;
+            border-radius: 6px;
+            padding: 10px 14px;
+            font-size: 13px;
+            margin-bottom: 16px;
+            display: none;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .error-message.visible {
+            display: flex;
+        }
+
+        .lockout-message {
+            background: rgba(210, 153, 34, 0.1);
+            border: 1px solid rgba(210, 153, 34, 0.3);
+            color: #d29922;
+            border-radius: 6px;
+            padding: 10px 14px;
+            font-size: 13px;
+            margin-bottom: 16px;
+            display: none;
+            text-align: center;
+        }
+
+        .lockout-message.visible {
+            display: block;
+        }
+
+        .lockout-message .countdown {
+            font-weight: 700;
+            font-size: 15px;
+            display: block;
+            margin-top: 4px;
+        }
+
+        .attempts-info {
+            text-align: center;
+            font-size: 11px;
+            color: #484f58;
+            margin-top: 12px;
+        }
+
+        .attempts-info.warning {
+            color: #d29922;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <div class="login-card">
+            <div class="login-header">
+                <div class="login-icon">📧</div>
+                <h1>Email Inbox</h1>
+                <p>Sign in to continue</p>
+            </div>
+
+            <div class="error-message" id="errorMsg">
+                <span>⚠</span>
+                <span id="errorText"></span>
+            </div>
+
+            <div class="lockout-message" id="lockoutMsg">
+                <span>Too many failed attempts</span>
+                <span class="countdown" id="lockoutCountdown"></span>
+            </div>
+
+            <form id="loginForm" onsubmit="handleLogin(event)">
+                <div class="form-group">
+                    <label for="username">Username</label>
+                    <input type="text" id="username" name="username" placeholder="Enter username" autocomplete="username" autofocus>
+                </div>
+                <div class="form-group">
+                    <label for="password">Password</label>
+                    <input type="password" id="password" name="password" placeholder="Enter password" autocomplete="current-password">
+                </div>
+                <button type="submit" class="login-btn" id="loginBtn">Sign In</button>
+            </form>
+
+            <div class="attempts-info" id="attemptsInfo"></div>
+        </div>
+    </div>
+
+    <script>
+        let lockoutTimer = null;
+        let lockoutEnd = null;
+
+        function showError(msg) {
+            const el = document.getElementById('errorMsg');
+            document.getElementById('errorText').textContent = msg;
+            el.classList.add('visible');
+            setTimeout(() => el.classList.remove('visible'), 5000);
+        }
+
+        function showLockout(seconds) {
+            lockoutEnd = Date.now() + seconds * 1000;
+            const el = document.getElementById('lockoutMsg');
+            el.classList.add('visible');
+            document.getElementById('loginForm').querySelectorAll('input, button').forEach(i => i.disabled = true);
+            document.getElementById('attemptsInfo').style.display = 'none';
+            document.getElementById('errorMsg').classList.remove('visible');
+            updateCountdown();
+        }
+
+        function updateCountdown() {
+            if (!lockoutEnd) return;
+            const remaining = Math.max(0, Math.ceil((lockoutEnd - Date.now()) / 1000));
+            if (remaining <= 0) {
+                document.getElementById('lockoutMsg').classList.remove('visible');
+                document.getElementById('loginForm').querySelectorAll('input, button').forEach(i => i.disabled = false);
+                lockoutEnd = null;
+                return;
+            }
+            const min = Math.floor(remaining / 60);
+            const sec = remaining % 60;
+            document.getElementById('lockoutCountdown').textContent =
+                min > 0 ? `${min}m ${sec.toString().padStart(2, '0')}s` : `${sec}s`;
+            lockoutTimer = setTimeout(updateCountdown, 500);
+        }
+
+        function updateAttempts(remaining) {
+            const el = document.getElementById('attemptsInfo');
+            if (remaining <= 0 || remaining >= 5) {
+                el.textContent = '';
+                el.classList.remove('warning');
+            } else {
+                el.textContent = `${remaining} attempt${remaining === 1 ? '' : 's'} remaining`;
+                el.classList.add('warning');
+            }
+        }
+
+        async function handleLogin(e) {
+            e.preventDefault();
+            const btn = document.getElementById('loginBtn');
+            const username = document.getElementById('username').value.trim();
+            const password = document.getElementById('password').value;
+
+            if (!username || !password) {
+                showError('Please enter username and password');
+                return;
+            }
+
+            btn.classList.add('loading');
+            btn.disabled = true;
+            document.getElementById('errorMsg').classList.remove('visible');
+
+            try {
+                const res = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password }),
+                });
+                const data = await res.json();
+
+                if (res.ok && data.success) {
+                    window.location.href = '/';
+                    return;
+                }
+
+                if (data.locked || data.retryAfter) {
+                    showLockout(data.retryAfter || 900);
+                } else {
+                    showError(data.error || 'Login failed');
+                    if (typeof data.attemptsRemaining === 'number') {
+                        updateAttempts(data.attemptsRemaining);
+                    }
+                }
+            } catch (err) {
+                showError('Network error. Please try again.');
+            } finally {
+                btn.classList.remove('loading');
+                btn.disabled = false;
+                document.getElementById('password').value = '';
+                document.getElementById('password').focus();
+            }
+        }
+
+        // Handle session expired redirect
+        async function checkSession() {
+            const params = new URLSearchParams(window.location.search);
+            if (params.get('expired') === '1') {
+                showError('Session expired. Please sign in again.');
+                history.replaceState(null, '', '/login');
+            }
+        }
+        checkSession();
+    </script>
+</body>
+</html>

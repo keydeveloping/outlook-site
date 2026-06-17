@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>API Keys Management - Outlook Web</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="api-keys-page">
+    <div class="api-keys-container">
+        <div class="api-keys-header">
+            <h1>🔑 API Keys Management</h1>
+            <a href="/" class="btn-back">← Back to Inbox</a>
+        </div>
+
+        <!-- Generate New Key Section -->
+        <div class="generate-key-section">
+            <h2>Generate New API Key</h2>
+            <form class="generate-key-form" id="generateForm">
+                <div class="form-group">
+                    <label for="keyName">Key Name</label>
+                    <input type="text" id="keyName" placeholder="e.g., AI Agent, Integration Bot" required>
+                </div>
+                <div class="form-group">
+                    <label for="permission">Permission Level</label>
+                    <select id="permission">
+                        <option value="read-only">Read Only</option>
+                        <option value="read-write">Read-Write</option>
+                        <option value="admin">Admin (Full Access)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="rateLimit">Rate Limit</label>
+                    <select id="rateLimit">
+                        <option value="unlimited">Unlimited</option>
+                        <option value="10/min">10 requests/min</option>
+                        <option value="30/min">30 requests/min</option>
+                        <option value="60/min" selected>60 requests/min</option>
+                        <option value="100/min">100 requests/min</option>
+                        <option value="300/min">300 requests/min</option>
+                        <option value="600/min">600 requests/min</option>
+                        <option value="1000/hour">1000 requests/hour</option>
+                        <option value="5000/hour">5000 requests/hour</option>
+                        <option value="10000/hour">10000 requests/hour</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="expires">Expires In</label>
+                    <select id="expires">
+                        <option value="30">30 days</option>
+                        <option value="90">90 days</option>
+                        <option value="365">1 year</option>
+                        <option value="">Never</option>
+                    </select>
+                </div>
+                <button type="submit" class="btn-generate">Generate Key</button>
+            </form>
+
+            <!-- New Key Display (hidden by default) -->
+            <div class="new-key-display" id="newKeyDisplay" style="display: none;">
+                <p><strong>New API Key Generated:</strong></p>
+                <div class="new-key-value">
+                    <code id="newKeyValue"></code>
+                    <button class="btn-copy" id="copyBtn" onclick="copyNewKey()">📋 Copy</button>
+                </div>
+                <div class="new-key-warning">
+                    ⚠️ <strong>Important:</strong> Save this key now. You won't be able to see it again!
+                </div>
+            </div>
+        </div>
+
+        <!-- API Keys List -->
+        <div class="api-keys-list">
+            <h2>Your API Keys</h2>
+            <table class="api-keys-table">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Permission</th>
+                        <th>Rate Limit</th>
+                        <th>Created</th>
+                        <th>Last Used</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="apiKeysTableBody">
+                    <tr>
+                        <td colspan="7" class="empty-state">Loading API keys...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- API Documentation -->
+        <div class="api-docs">
+            <h2>📚 API Documentation</h2>
+
+            <h3>Authentication</h3>
+            <p>Include your API key in the request header:</p>
+            <pre><code>X-API-Key: your_api_key_here</code></pre>
+
+            <h3>Available Endpoints</h3>
+
+            <p><strong>List Accounts</strong></p>
+            <pre><code>GET /api/v1/agent/accounts
+
+curl -H "X-API-Key: YOUR_KEY" http://localhost:5000/api/v1/agent/accounts</code></pre>
+
+            <p><strong>Get Inbox</strong></p>
+            <pre><code>GET /api/v1/agent/inbox/{email}
+
+curl -H "X-API-Key: YOUR_KEY" http://localhost:5000/api/v1/agent/inbox/user@example.com</code></pre>
+
+            <p><strong>Get Message</strong></p>
+            <pre><code>GET /api/v1/agent/message/{email}/{message_id}
+
+curl -H "X-API-Key: YOUR_KEY" http://localhost:5000/api/v1/agent/message/user@example.com/MSG123</code></pre>
+
+            <p><strong>Search Messages</strong></p>
+            <pre><code>GET /api/v1/agent/search/{email}?q={query}
+
+curl -H "X-API-Key: YOUR_KEY" "http://localhost:5000/api/v1/agent/search/user@example.com?q=invoice"</code></pre>
+
+            <h3>Permission Levels</h3>
+            <p><span class="badge badge-read-only">Read Only</span> - Can list accounts and read messages</p>
+            <p><span class="badge badge-read-write">Read-Write</span> - Can read and mark messages as read/unread</p>
+            <p><span class="badge badge-admin">Admin</span> - Full access including delete operations</p>
+        </div>
+    </div>
+
+    <script>
+        let apiKeyList = [];
+
+        function escapeHtml(value) {
+            return String(value ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+
+        // Load API keys on page load
+        document.addEventListener('DOMContentLoaded', loadApiKeys);
+
+        // Generate key form handler
+        document.getElementById('generateForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const name = document.getElementById('keyName').value;
+            const permission = document.getElementById('permission').value;
+            const rateLimit = document.getElementById('rateLimit').value;
+            const expires = document.getElementById('expires').value;
+
+            try {
+                const response = await fetch('/api/keys/generate', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        name: name,
+                        permission: permission,
+                        rate_limit: rateLimit,
+                        expires_days: expires ? parseInt(expires) : null
+                    })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    // Show the new key
+                    document.getElementById('newKeyValue').textContent = result.key;
+                    document.getElementById('newKeyDisplay').style.display = 'block';
+
+                    // Reset form
+                    document.getElementById('generateForm').reset();
+
+                    // Reload keys list
+                    await loadApiKeys();
+                } else {
+                    alert('Error: ' + result.error);
+                }
+            } catch (error) {
+                alert('Failed to generate key: ' + error.message);
+            }
+        });
+
+        async function loadApiKeys() {
+            try {
+                const response = await fetch('/api/keys');
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                const contentType = response.headers.get('content-type');
+                if (!contentType || !contentType.includes('application/json')) {
+                    throw new Error('Server returned non-JSON response');
+                }
+
+                const result = await response.json();
+
+                if (result.success) {
+                    apiKeyList = result.keys;
+                    renderApiKeysTable(result.keys);
+                } else {
+                    document.getElementById('apiKeysTableBody').innerHTML =
+                        `<tr><td colspan="7" class="empty-state">Error: ${escapeHtml(result.error || 'Unknown error')}</td></tr>`;
+                }
+            } catch (error) {
+                console.error('Failed to load API keys:', error);
+                document.getElementById('apiKeysTableBody').innerHTML =
+                    `<tr><td colspan="7" class="empty-state">Error: ${escapeHtml(error.message)}</td></tr>`;
+            }
+        }
+
+        function renderApiKeysTable(keys) {
+            const tbody = document.getElementById('apiKeysTableBody');
+
+            if (keys.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No API keys yet. Generate one above!</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = keys.map(key => {
+                const created = new Date(key.created_at).toLocaleDateString();
+                const lastUsed = key.last_used ? new Date(key.last_used).toLocaleDateString() : 'Never';
+                const isRevoked = key.revoked;
+                const isExpired = key.expires_at && new Date(key.expires_at) < new Date();
+                const rateLimit = key.rate_limit || 'unlimited';
+                const permission = ['read-only', 'read-write', 'admin'].includes(key.permission) ? key.permission : 'read-only';
+                const keyId = escapeHtml(key.id);
+
+                let statusBadge = '';
+                if (isRevoked) {
+                    statusBadge = '<span class="badge badge-revoked">Revoked</span>';
+                } else if (isExpired) {
+                    statusBadge = '<span class="badge badge-revoked">Expired</span>';
+                } else {
+                    statusBadge = '<span class="badge badge-active">Active</span>';
+                }
+
+                const permissionBadge = `<span class="badge badge-${permission}">${escapeHtml(permission)}</span>`;
+                const rateLimitBadge = `<span class="badge badge-rate-limit">${escapeHtml(rateLimit)}</span>`;
+
+                const revokeButton = !isRevoked && !isExpired ?
+                    `<button class="btn-revoke" onclick="revokeKey('${keyId}')">Revoke</button>` : '';
+
+                return `
+                    <tr>
+                        <td>${escapeHtml(key.name)}</td>
+                        <td>${permissionBadge}</td>
+                        <td>${rateLimitBadge}</td>
+                        <td>${escapeHtml(created)}</td>
+                        <td>${escapeHtml(lastUsed)}</td>
+                        <td>${statusBadge}</td>
+                        <td>${revokeButton}</td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        async function revokeKey(keyId) {
+            const confirmed = await showModal({
+                title: 'Revoke API Key',
+                message: 'Are you sure you want to revoke this API key? This action cannot be undone.',
+                type: 'warning',
+                confirmText: 'Revoke',
+                cancelText: 'Cancel'
+            });
+
+            if (!confirmed) return;
+
+            try {
+                const response = await fetch(`/api/keys/${keyId}/revoke`, {
+                    method: 'POST'
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    await showModal({
+                        title: 'Success',
+                        message: 'API key has been revoked successfully.',
+                        type: 'success'
+                    });
+                    await loadApiKeys();
+                } else {
+                    await showModal({
+                        title: 'Error',
+                        message: result.error,
+                        type: 'error'
+                    });
+                }
+            } catch (error) {
+                await showModal({
+                    title: 'Error',
+                    message: 'Failed to revoke key: ' + error.message,
+                    type: 'error'
+                });
+            }
+        }
+
+        // Custom modal system (matches style.css modal design)
+        function showModal(options) {
+            return new Promise((resolve) => {
+                const { title, message, type = 'info', confirmText = 'OK', cancelText = null } = options;
+
+                const icons = { warning: '⚠', success: '✓', error: '✕', info: 'ℹ' };
+                const safeType = Object.prototype.hasOwnProperty.call(icons, type) ? type : 'info';
+                const icon = icons[safeType];
+
+                const overlay = document.createElement('div');
+                overlay.className = 'modal-overlay';
+                overlay.innerHTML = `
+                    <div class="modal">
+                        <div class="modal-icon modal-icon-${safeType}">${icon}</div>
+                        <h3 class="modal-title">${escapeHtml(title)}</h3>
+                        <p class="modal-message">${escapeHtml(message)}</p>
+                        <div class="modal-buttons">
+                            ${cancelText ? `<button class="modal-btn modal-btn-cancel">${escapeHtml(cancelText)}</button>` : ''}
+                            <button class="modal-btn modal-btn-confirm ${safeType === 'error' || safeType === 'warning' ? 'modal-btn-danger' : ''}">${escapeHtml(confirmText)}</button>
+                        </div>
+                    </div>
+                `;
+
+                document.body.appendChild(overlay);
+
+                // Trigger animation
+                requestAnimationFrame(() => overlay.classList.add('active'));
+
+                const confirmBtn = overlay.querySelector('.modal-btn-confirm');
+                const cancelBtn = overlay.querySelector('.modal-btn-cancel');
+
+                confirmBtn.onclick = () => {
+                    overlay.classList.remove('active');
+                    setTimeout(() => overlay.remove(), 200);
+                    resolve(true);
+                };
+
+                if (cancelBtn) {
+                    cancelBtn.onclick = () => {
+                        overlay.classList.remove('active');
+                        setTimeout(() => overlay.remove(), 200);
+                        resolve(false);
+                    };
+                }
+
+                // Close on overlay click
+                overlay.onclick = (e) => {
+                    if (e.target === overlay) {
+                        overlay.classList.remove('active');
+                        setTimeout(() => overlay.remove(), 200);
+                        resolve(false);
+                    }
+                };
+            });
+        }
+
+        function copyNewKey() {
+            const keyValue = document.getElementById('newKeyValue').textContent;
+            const btn = document.getElementById('copyBtn');
+            const originalText = btn.innerHTML;
+
+            navigator.clipboard.writeText(keyValue).then(() => {
+                btn.innerHTML = '✓ Copied to clipboard!';
+                btn.style.backgroundColor = '#238636';
+                btn.style.color = '#ffffff';
+
+                setTimeout(() => {
+                    btn.innerHTML = originalText;
+                    btn.style.backgroundColor = '';
+                    btn.style.color = '';
+                }, 2000);
+            }).catch(err => {
+                btn.innerHTML = '❌ Failed to copy';
+                btn.style.backgroundColor = '#da3633';
+                btn.style.color = '#ffffff';
+
+                setTimeout(() => {
+                    btn.innerHTML = originalText;
+                    btn.style.backgroundColor = '';
+                    btn.style.color = '';
+                }, 2000);
+            });
+        }
+    </script>
+</body>
+</html>

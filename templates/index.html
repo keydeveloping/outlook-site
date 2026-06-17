@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Email Inbox</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="app">
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h2>Inbox</h2>
+                <button class="upload-btn" onclick="document.getElementById('fileUpload').click()" title="Upload accounts file">
+                    <span>＋</span> Upload
+                </button>
+                <input type="file" id="fileUpload" accept=".txt" style="display:none" onchange="uploadAccounts(this)">
+            </div>
+            <div class="search-container">
+                <input type="text" id="searchInput" class="search-input" placeholder="Search email..." autocomplete="off">
+                <span class="search-icon">🔍</span>
+                <span class="search-count" id="searchCount"></span>
+                <button class="search-clear" id="searchClear" onclick="clearSearch()" title="Clear">✕</button>
+            </div>
+            <div class="accounts-list" id="accountsList">
+                <div class="loading">Loading accounts...</div>
+            </div>
+            <div class="sidebar-footer">
+                <button class="api-keys-btn" onclick="window.location.href='/api-keys'" title="Manage API Keys">🔑 API Keys</button>
+                <button class="logout-btn" onclick="window.location.href='/logout'">⎋ Logout</button>
+            </div>
+        </aside>
+        <main class="content">
+            <div class="email-list-header" id="emailListHeader">
+                <h3>Select an account</h3>
+            </div>
+            <div class="email-list" id="emailList">
+                <div class="empty-state">Select an account from the sidebar to view emails</div>
+            </div>
+            <div class="email-view" id="emailView" style="display:none;">
+                <div class="email-view-header">
+                    <button class="back-btn" onclick="showEmailList()">← Back</button>
+                    <h3 id="emailSubject"></h3>
+                    <div class="email-meta">
+                        <span id="emailFrom"></span>
+                        <span id="emailDate"></span>
+                    </div>
+                </div>
+                <div class="email-body" id="emailBody"></div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Custom Modal -->
+    <div class="modal-overlay" id="modalOverlay">
+        <div class="modal">
+            <div class="modal-icon" id="modalIcon">!</div>
+            <h3 class="modal-title" id="modalTitle"></h3>
+            <div class="modal-message" id="modalMessage"></div>
+            <div class="modal-buttons" id="modalButtons"></div>
+        </div>
+    </div>
+
+    <script>
+        // Global 401 handler — redirect to login if session expired
+        const _origFetch = window.fetch;
+        window.fetch = async function(...args) {
+            const res = await _origFetch.apply(this, args);
+            if (res.status === 401) {
+                const data = await res.clone().json().catch(() => ({}));
+                if (data.redirect === '/login') {
+                    window.location.href = '/login?expired=1';
+                }
+            }
+            return res;
+        };
+
+        // Custom modal system
+        function showModal(title, message, options = {}) {
+            return new Promise(resolve => {
+                const overlay = document.getElementById('modalOverlay');
+                const icon = document.getElementById('modalIcon');
+                const titleEl = document.getElementById('modalTitle');
+                const msgEl = document.getElementById('modalMessage');
+                const btnsEl = document.getElementById('modalButtons');
+
+                titleEl.textContent = title;
+                msgEl.textContent = message;
+
+                // Icon style
+                const type = options.type || 'info'; // info, success, error, warning
+                const icons = { info: 'ℹ', success: '✓', error: '✕', warning: '⚠' };
+                icon.textContent = icons[type] || 'ℹ';
+                icon.className = 'modal-icon modal-icon-' + type;
+
+                // Buttons
+                btnsEl.innerHTML = '';
+                if (options.confirm) {
+                    const cancelBtn = document.createElement('button');
+                    cancelBtn.className = 'modal-btn modal-btn-cancel';
+                    cancelBtn.textContent = options.cancelText || 'Cancel';
+                    cancelBtn.onclick = () => { overlay.classList.remove('active'); resolve(false); };
+
+                    const confirmBtn = document.createElement('button');
+                    confirmBtn.className = 'modal-btn modal-btn-confirm';
+                    if (type === 'error' || type === 'warning') confirmBtn.classList.add('modal-btn-danger');
+                    confirmBtn.textContent = options.confirmText || 'Confirm';
+                    confirmBtn.onclick = () => { overlay.classList.remove('active'); resolve(true); };
+
+                    btnsEl.appendChild(cancelBtn);
+                    btnsEl.appendChild(confirmBtn);
+                } else {
+                    const okBtn = document.createElement('button');
+                    okBtn.className = 'modal-btn modal-btn-confirm';
+                    okBtn.textContent = options.okText || 'OK';
+                    okBtn.onclick = () => { overlay.classList.remove('active'); resolve(true); };
+                    btnsEl.appendChild(okBtn);
+                }
+
+                overlay.classList.add('active');
+
+                // Close on overlay click
+                overlay.onclick = (e) => {
+                    if (e.target === overlay) { overlay.classList.remove('active'); resolve(false); }
+                };
+            });
+        }
+        let currentAccountIndex = null;
+        let currentEmail = '';
+
+        function formatDateTime(dateStr) {
+            const d = new Date(dateStr);
+            const month = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+            const time = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+            return month + ' · ' + time;
+        }
+
+        function renderMessages(response) {
+            const list = document.getElementById('emailList');
+            if (response.error) {
+                list.innerHTML = '';
+                const error = document.createElement('div');
+                error.className = 'empty-state';
+                error.textContent = response.error;
+                list.appendChild(error);
+                return;
+            }
+            const messages = response.messages || response;
+            if (messages.length === 0) {
+                list.innerHTML = '<div class="empty-state">No emails in inbox</div>';
+                return;
+            }
+            list.innerHTML = '';
+            messages.forEach(m => {
+                const from = m.from?.emailAddress?.address || 'Unknown';
+                const senderName = m.from?.emailAddress?.name || from;
+                const item = document.createElement('div');
+                item.className = 'email-item' + (m.isRead ? '' : ' unread');
+                item.onclick = () => openEmail(m.id);
+
+                const toggle = document.createElement('button');
+                toggle.className = 'mark-toggle';
+                toggle.title = m.isRead ? 'Mark as unread' : 'Mark as read';
+                toggle.onclick = (event) => {
+                    event.stopPropagation();
+                    markRead(currentAccountIndex, m.id, toggle);
+                };
+                item.appendChild(toggle);
+
+                [['email-from', senderName], ['email-subject', m.subject || '(No subject)'], ['email-preview', m.bodyPreview || ''], ['email-date', formatDateTime(m.receivedDateTime)]].forEach(([className, text]) => {
+                    const el = document.createElement('div');
+                    el.className = className;
+                    el.textContent = text;
+                    item.appendChild(el);
+                });
+                list.appendChild(item);
+            });
+        }
+
+        let allAccounts = []; // Store all accounts for search filtering
+
+        function renderAccounts(accounts) {
+            const list = document.getElementById('accountsList');
+            if (accounts.length === 0) {
+                list.innerHTML = '<div class="empty-state">No accounts found<br><small>Add accounts to accounts.txt</small></div>';
+                return;
+            }
+            list.innerHTML = '';
+            accounts.forEach(a => {
+                const originalIndex = allAccounts.findIndex(acc => acc.email === a.email);
+                const item = document.createElement('div');
+                item.className = 'account-item';
+                item.onclick = (event) => selectAccount(originalIndex, a.email, event.currentTarget);
+
+                const avatar = document.createElement('div');
+                avatar.className = 'account-avatar';
+                avatar.textContent = (a.email[0] || '?').toUpperCase();
+                item.appendChild(avatar);
+
+                const info = document.createElement('div');
+                info.className = 'account-info';
+                const email = document.createElement('div');
+                email.className = 'account-email';
+                email.textContent = a.email;
+                info.appendChild(email);
+                item.appendChild(info);
+
+                const del = document.createElement('button');
+                del.className = 'delete-account-btn';
+                del.title = 'Delete this account';
+                del.textContent = '✕';
+                del.onclick = (event) => { event.stopPropagation(); deleteAccount(originalIndex); };
+                item.appendChild(del);
+                list.appendChild(item);
+            });
+        }
+
+        function filterAccounts(query) {
+            if (!query) {
+                return allAccounts;
+            }
+            const lowerQuery = query.toLowerCase();
+            return allAccounts.filter(a => a.email.toLowerCase().includes(lowerQuery));
+        }
+
+        function updateSearchCount(filteredCount) {
+            const countEl = document.getElementById('searchCount');
+            const clearBtn = document.getElementById('searchClear');
+            if (filteredCount === allAccounts.length || filteredCount === 0) {
+                countEl.textContent = '';
+                clearBtn.style.display = 'none';
+            } else {
+                countEl.textContent = filteredCount + '/' + allAccounts.length;
+                clearBtn.style.display = 'block';
+            }
+        }
+
+        function clearSearch() {
+            const input = document.getElementById('searchInput');
+            input.value = '';
+            renderAccounts(allAccounts);
+            updateSearchCount(allAccounts.length);
+            input.focus();
+        }
+
+        async function loadAccounts() {
+            const res = await fetch('/api/accounts');
+            const accountsResponse = await res.json();
+            allAccounts = accountsResponse.accounts || accountsResponse;
+            const filtered = filterAccounts(document.getElementById('searchInput').value);
+            renderAccounts(filtered);
+            updateSearchCount(filtered.length);
+
+            // Add search event listener
+            document.getElementById('searchInput').addEventListener('input', (e) => {
+                const filtered = filterAccounts(e.target.value);
+                renderAccounts(filtered);
+                updateSearchCount(filtered.length);
+            });
+        }
+
+
+        function renderInboxHeader(email, refreshing) {
+            const header = document.getElementById('emailListHeader');
+            header.innerHTML = '';
+            const title = document.createElement('h3');
+            title.textContent = email;
+            header.appendChild(title);
+            const button = document.createElement('button');
+            button.className = 'refresh-btn' + (refreshing ? ' refreshing' : '');
+            button.title = 'Refresh inbox';
+            button.textContent = refreshing ? '↻ Refreshing...' : '↻ Refresh';
+            button.disabled = refreshing;
+            button.onclick = refreshInbox;
+            header.appendChild(button);
+        }
+
+        async function selectAccount(index, email, targetEl = null) {
+            currentAccountIndex = index;
+            currentEmail = email;
+            document.querySelectorAll('.account-item').forEach(el => el.classList.remove('active'));
+            if (targetEl) {
+                targetEl.classList.add('active');
+            }
+
+            const header = document.getElementById('emailListHeader');
+            const list = document.getElementById('emailList');
+            const view = document.getElementById('emailView');
+
+            renderInboxHeader(email, false);
+            list.style.display = 'block';
+            header.style.display = 'flex';
+            view.style.display = 'none';
+            list.innerHTML = '<div class="loading">Loading emails...</div>';
+
+            try {
+                const res = await fetch('/api/inbox/' + index);
+                const messages = await res.json();
+                renderMessages(messages);
+            } catch (err) {
+                list.innerHTML = '<div class="empty-state">Error loading emails</div>';
+            }
+        }
+
+        async function refreshInbox() {
+            if (currentAccountIndex === null) return;
+            const list = document.getElementById('emailList');
+            const view = document.getElementById('emailView');
+            const header = document.getElementById('emailListHeader');
+
+            renderInboxHeader(currentEmail, true);
+            list.style.display = 'block';
+            header.style.display = 'flex';
+            view.style.display = 'none';
+            list.innerHTML = '<div class="loading">Refreshing inbox...</div>';
+
+            try {
+                const res = await fetch('/api/inbox/' + currentAccountIndex);
+                const messages = await res.json();
+                renderMessages(messages);
+                // Restore header with active refresh button
+                renderInboxHeader(currentEmail, false);
+            } catch (err) {
+                list.innerHTML = '<div class="empty-state">Error refreshing emails</div>';
+                renderInboxHeader(currentEmail, false);
+            }
+        }
+
+        async function deleteAccount(index) {
+            const email = document.querySelectorAll('.account-item')[index]?.querySelector('.account-email')?.textContent || 'this account';
+            const confirmed = await showModal('Delete Account', email + '\n\nThis action cannot be undone.', {
+                type: 'warning',
+                confirm: true,
+                confirmText: 'Delete',
+                cancelText: 'Cancel',
+            });
+            if (!confirmed) return;
+
+            try {
+                const res = await fetch('/api/delete-account/' + index, { method: 'DELETE' });
+                const data = await res.json();
+                if (data.error) {
+                    await showModal('Error', data.error, { type: 'error' });
+                    return;
+                }
+                // If we deleted the currently viewed account, reset view
+                if (currentAccountIndex === index) {
+                    currentAccountIndex = null;
+                    currentEmail = '';
+                    document.getElementById('emailListHeader').innerHTML = '<h3>Select an account</h3>';
+                    document.getElementById('emailList').innerHTML = '<div class="empty-state">Select an account from the sidebar to view emails</div>';
+                    document.getElementById('emailView').style.display = 'none';
+                } else if (currentAccountIndex > index) {
+                    currentAccountIndex--;
+                }
+                loadAccounts();
+                await showModal('Account Deleted', data.message, { type: 'success' });
+            } catch (err) {
+                await showModal('Error', 'Delete failed: ' + err, { type: 'error' });
+            }
+        }
+
+        async function uploadAccounts(input) {
+            const file = input.files[0];
+            if (!file) return;
+
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('mode', 'append');
+
+            try {
+                const res = await fetch('/api/upload-accounts', {
+                    method: 'POST',
+                    body: formData,
+                });
+                const data = await res.json();
+                if (data.error) {
+                    let errMsg = data.error;
+                    if (data.details && data.details.length > 0) {
+                        errMsg += '\n\n' + data.details.join('\n');
+                    }
+                    await showModal('Upload Error', errMsg, { type: 'error' });
+                    return;
+                }
+                let msg = data.message + ' (Total: ' + data.total + ')';
+                if (data.errors && data.errors.length > 0) {
+                    msg += '\n\nWarnings:\n' + data.errors.join('\n');
+                    await showModal('Upload Complete', msg, { type: 'warning' });
+                } else {
+                    await showModal('Upload Successful', msg, { type: 'success' });
+                }
+                loadAccounts();
+            } catch (err) {
+                await showModal('Upload Failed', 'Upload failed: ' + err, { type: 'error' });
+            } finally {
+                input.value = '';  // Reset so same file can be re-uploaded
+            }
+        }
+
+        function authorizeAccount(index) {
+            fetch('/api/authorize-url/' + index)
+                .then(r => r.json())
+                .then(data => {
+                    if (data.url) {
+                        const w = window.open(data.url, 'oauth', 'width=600,height=700');
+                        window.addEventListener('message', function handler(e) {
+                            if (e.data && e.data.type === 'auth-success') {
+                                window.removeEventListener('message', handler);
+                                // Re-select current account to refresh inbox
+                                if (currentAccountIndex !== null) {
+                                    selectAccount(currentAccountIndex, currentEmail);
+                                }
+                            }
+                        });
+                    }
+                });
+        }
+
+        async function markRead(accountIndex, messageId, btn) {
+            const emailItem = btn.closest('.email-item');
+            const isCurrentlyRead = !emailItem.classList.contains('unread');
+            const newIsRead = !isCurrentlyRead;
+            btn.style.pointerEvents = 'none';
+            btn.style.opacity = '0.5';
+            try {
+                const res = await fetch('/api/mark-read/' + accountIndex + '/' + messageId, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ isRead: newIsRead })
+                });
+
+                if (res.status === 403 || res.status === 401) {
+                    const data = await res.json();
+                    if (data.needReauth) {
+                        const ok = await showModal('Re-authorization Needed', 'This account needs re-authorization for read/write access.\nAuthorize now?', {
+                            type: 'warning',
+                            confirm: true,
+                            confirmText: 'Authorize',
+                            cancelText: 'Later',
+                        });
+                        if (ok) authorizeAccount(accountIndex);
+                        return;
+                    }
+                    await showModal('Error', data.error || 'Authorization failed', { type: 'error' });
+                    return;
+                }
+
+                const data = await res.json();
+                if (data.error) {
+                    console.error('Mark read error:', data.error);
+                    return;
+                }
+                if (newIsRead) {
+                    emailItem.classList.remove('unread');
+                    btn.title = 'Mark as unread';
+                } else {
+                    emailItem.classList.add('unread');
+                    btn.title = 'Mark as read';
+                }
+            } catch (err) {
+                console.error('Mark read failed:', err);
+            } finally {
+                btn.style.pointerEvents = '';
+                btn.style.opacity = '';
+            }
+        }
+
+        async function openEmail(messageId) {
+            const list = document.getElementById('emailList');
+            const view = document.getElementById('emailView');
+            const header = document.getElementById('emailListHeader');
+
+            list.style.display = 'none';
+            header.style.display = 'none';
+            view.style.display = 'block';
+
+            document.getElementById('emailSubject').textContent = 'Loading...';
+            document.getElementById('emailBody').innerHTML = '';
+
+            try {
+                const res = await fetch('/api/message/' + currentAccountIndex + '/' + messageId);
+                const response = await res.json();
+
+                if (response.error) {
+                    const body = document.getElementById('emailBody');
+                    body.innerHTML = '';
+                    const error = document.createElement('div');
+                    error.className = 'empty-state';
+                    error.textContent = response.error;
+                    body.appendChild(error);
+                    return;
+                }
+
+                const msg = response.message || response;
+                document.getElementById('emailSubject').textContent = msg.subject || '(No subject)';
+                document.getElementById('emailFrom').textContent = 'From: ' + (msg.from?.emailAddress?.name || msg.from?.emailAddress?.address || 'Unknown');
+                document.getElementById('emailDate').textContent = new Date(msg.receivedDateTime).toLocaleString();
+                document.getElementById('emailBody').textContent = msg.body?.content || 'No content';
+            } catch (err) {
+                document.getElementById('emailBody').innerHTML = '<div class="empty-state">Error loading email</div>';
+            }
+        }
+
+        function showEmailList() {
+            const list = document.getElementById('emailList');
+            const view = document.getElementById('emailView');
+            const header = document.getElementById('emailListHeader');
+            list.style.display = 'block';
+            header.style.display = 'flex';
+            view.style.display = 'none';
+        }
+
+        loadAccounts();
+    </script>
+</body>
+</html>
