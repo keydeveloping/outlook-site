@@ -29,10 +29,7 @@ ENV PATH=/home/appuser/.local/bin:$PATH
 COPY --chown=appuser:appuser . .
 
 # Create data directory with proper permissions
-RUN mkdir -p /app/data && chown -R appuser:appuser /app/data
-
-# Switch to non-root user
-USER appuser
+RUN mkdir -p /app/data && chown -R appuser:appuser /app/data && chmod +x /app/docker-entrypoint.sh
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
@@ -48,4 +45,5 @@ ENV PYTHONUNBUFFERED=1 \
     FLASK_DEBUG=0
 
 # Run application
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
 CMD ["python", "app.py"]
