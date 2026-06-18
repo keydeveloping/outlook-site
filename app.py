@@ -176,7 +176,7 @@ def json_success(**payload):
 
 
 # ── In-memory caches ────────────────────────────────────────────────
-_accounts_cache = {"data": None, "mtime": 0, "lock": threading.Lock()}
+_accounts_cache = {"data": None, "mtime": 0, "unreadable_rows": [], "lock": threading.Lock()}
 _token_cache = OrderedDict()  # key includes refresh token hash to avoid cross-account token reuse
 _token_lock = threading.Lock()
 
@@ -198,23 +198,38 @@ _http.mount("https://", _adapter)
 _http.mount("http://", _adapter)
 
 # ── Encryption helpers ─────────────────────────────────────────────
+def _decrypt_field(value):
+    """Decrypt a field, unwrapping accidental nested encryption layers"""
+    if not (ENCRYPTION_ENABLED and value):
+        return value
+    try:
+        current = value
+        for _ in range(100):
+            if not (isinstance(current, str) and current.startswith('ENC:')):
+                return current
+            decrypted = decrypt_value(current)
+            if decrypted == current:
+                raise ValueError("Encrypted field could not be decrypted")
+            current = decrypted
+        if isinstance(current, str) and current.startswith('ENC:'):
+            raise ValueError("Encrypted field has too many nested layers")
+        return current
+    except ValueError:
+        raise
+    except Exception as e:
+        print(f"⚠ Decryption failed: {e}")
+        return value
+
 def _encrypt_field(value):
     """Encrypt a single field if encryption is enabled"""
     if ENCRYPTION_ENABLED and value:
         try:
-            return encrypt_value(value)
+            plaintext = _decrypt_field(value)
+            return encrypt_value(plaintext)
+        except ValueError:
+            raise
         except Exception as e:
             print(f"⚠ Encryption failed: {e}")
-            return value
-    return value
-
-def _decrypt_field(value):
-    """Decrypt a single field if encryption is enabled"""
-    if ENCRYPTION_ENABLED and value:
-        try:
-            return decrypt_value(value)
-        except Exception as e:
-            print(f"⚠ Decryption failed: {e}")
             return value
     return value
 
@@ -224,6 +239,7 @@ def load_accounts():
         if not os.path.exists(ACCOUNTS_FILE):
             _accounts_cache["data"] = []
             _accounts_cache["mtime"] = 0
+            _accounts_cache["unreadable_rows"] = []
             return []
         mtime = os.path.getmtime(ACCOUNTS_FILE)
         if _accounts_cache["data"] is not None and mtime == _accounts_cache["mtime"]:
@@ -231,6 +247,7 @@ def load_accounts():
 
         # Load all accounts first
         all_accounts = []
+        unreadable_rows = []
         with open(ACCOUNTS_FILE, "r") as f:
             for line in f:
                 line = line.strip()
@@ -238,13 +255,16 @@ def load_accounts():
                     continue
                 parts = line.split("----")
                 if len(parts) == 4:
-                    # Decrypt fields if encryption is enabled
-                    all_accounts.append({
-                        "email": _decrypt_field(parts[0]),
-                        "password": _decrypt_field(parts[1]),
-                        "client_id": _decrypt_field(parts[2]),
-                        "refresh_token": _decrypt_field(parts[3]),
-                    })
+                    try:
+                        all_accounts.append({
+                            "email": _decrypt_field(parts[0]),
+                            "password": _decrypt_field(parts[1]),
+                            "client_id": _decrypt_field(parts[2]),
+                            "refresh_token": _decrypt_field(parts[3]),
+                        })
+                    except ValueError as e:
+                        unreadable_rows.append(line)
+                        print(f"⚠ Skipping unreadable encrypted account row: {e}")
 
         # Deduplicate by email (keep first occurrence)
         seen_emails = set()
@@ -263,12 +283,14 @@ def load_accounts():
 
         _accounts_cache["data"] = accounts
         _accounts_cache["mtime"] = mtime
+        _accounts_cache["unreadable_rows"] = unreadable_rows
         return accounts
 
 def invalidate_accounts_cache():
     with _accounts_cache["lock"]:
         _accounts_cache["data"] = None
         _accounts_cache["mtime"] = 0
+        _accounts_cache["unreadable_rows"] = []
 
 def save_accounts(accounts, already_deduplicated=False):
     if already_deduplicated:
@@ -282,16 +304,22 @@ def save_accounts(accounts, already_deduplicated=False):
                 seen_emails.add(email_lower)
                 unique.append(a)
 
-    # Encrypt fields before writing
+    rows = []
+    for a in unique:
+        email = _encrypt_field(a['email'])
+        password = _encrypt_field(a['password'])
+        client_id = _encrypt_field(a['client_id'])
+        refresh_token = _encrypt_field(a['refresh_token'])
+        rows.append(f"{email}----{password}----{client_id}----{refresh_token}")
+
+    with _accounts_cache["lock"]:
+        rows.extend(_accounts_cache.get("unreadable_rows", []))
+
     with open(ACCOUNTS_FILE, "w") as f:
         if ENCRYPTION_ENABLED:
             f.write("# ENCRYPTED - DO NOT EDIT MANUALLY\n")
-        for a in unique:
-            email = _encrypt_field(a['email'])
-            password = _encrypt_field(a['password'])
-            client_id = _encrypt_field(a['client_id'])
-            refresh_token = _encrypt_field(a['refresh_token'])
-            f.write(f"{email}----{password}----{client_id}----{refresh_token}\n")
+        for row in rows:
+            f.write(f"{row}\n")
     invalidate_accounts_cache()
 
 # ── Microsoft API helpers ───────────────────────────────────────────
@@ -643,13 +671,15 @@ def api_check_duplicates():
                 continue
             parts = line.split("----")
             if len(parts) == 4:
-                # Decrypt email for comparison
-                all_accounts.append({
-                    "email": _decrypt_field(parts[0]),
-                    "password": parts[1],
-                    "client_id": parts[2],
-                    "refresh_token": parts[3],
-                })
+                try:
+                    all_accounts.append({
+                        "email": _decrypt_field(parts[0]),
+                        "password": parts[1],
+                        "client_id": parts[2],
+                        "refresh_token": parts[3],
+                    })
+                except ValueError as e:
+                    print(f"⚠ Skipping unreadable encrypted account row: {e}")
 
     # Find duplicates
     email_counts = {}
@@ -683,6 +713,7 @@ def api_clean_duplicates():
 
     # Read all accounts without deduplication
     all_accounts = []
+    unreadable_rows = []
     with open(ACCOUNTS_FILE, "r") as f:
         for line in f:
             line = line.strip()
@@ -690,13 +721,16 @@ def api_clean_duplicates():
                 continue
             parts = line.split("----")
             if len(parts) == 4:
-                # Decrypt fields
-                all_accounts.append({
-                    "email": _decrypt_field(parts[0]),
-                    "password": _decrypt_field(parts[1]),
-                    "client_id": _decrypt_field(parts[2]),
-                    "refresh_token": _decrypt_field(parts[3]),
-                })
+                try:
+                    all_accounts.append({
+                        "email": _decrypt_field(parts[0]),
+                        "password": _decrypt_field(parts[1]),
+                        "client_id": _decrypt_field(parts[2]),
+                        "refresh_token": _decrypt_field(parts[3]),
+                    })
+                except ValueError as e:
+                    unreadable_rows.append(line)
+                    print(f"⚠ Skipping unreadable encrypted account row: {e}")
 
     original_count = len(all_accounts)
 
@@ -720,6 +754,8 @@ def api_clean_duplicates():
         )
 
     # Save cleaned accounts
+    with _accounts_cache["lock"]:
+        _accounts_cache["unreadable_rows"] = unreadable_rows
     save_accounts(unique, already_deduplicated=True)
 
     return json_success(

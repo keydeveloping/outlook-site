@@ -35,6 +35,7 @@ venv/
 # Data files (sensitive)
 data/*.json
 data/*.txt
+akun.txt
 !data/README.md
 
 # Backup files

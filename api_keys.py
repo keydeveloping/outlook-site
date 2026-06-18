@@ -3,6 +3,7 @@ API Key Management Module
 Handles generation, storage, verification, revocation, and usage tracking
 """
 import json
+import os
 import time
 import secrets
 import hashlib
@@ -13,7 +14,7 @@ import threading
 
 # Files to store API key metadata, usage logs, and persistent rate-limit windows.
 # Raw API keys are never stored; data/api_keys.json is keyed by SHA-256 hashes.
-DATA_DIR = Path(__file__).parent / 'data'
+DATA_DIR = Path(os.environ.get('API_DATA_DIR', Path(__file__).parent / 'data'))
 API_KEYS_FILE = DATA_DIR / 'api_keys.json'
 API_USAGE_FILE = DATA_DIR / 'api_usage.json'
 API_RATE_LIMIT_FILE = DATA_DIR / 'api_rate_limits.json'
