@@ -607,7 +607,14 @@ def api_upload_accounts():
             continue
         parts = line.split("----")
         if len(parts) == 4:
-            email = parts[0].strip()
+            try:
+                email = _decrypt_field(parts[0].strip())
+                password = _decrypt_field(parts[1].strip())
+                client_id = _decrypt_field(parts[2].strip())
+                refresh_token = _decrypt_field(parts[3].strip())
+            except ValueError:
+                errors.append(f"Line {i}: encrypted account could not be decrypted, skipped")
+                continue
             if email.lower() in existing_emails:
                 errors.append(f"Line {i}: {email} already exists, skipped")
                 continue
@@ -617,9 +624,9 @@ def api_upload_accounts():
             seen_emails.add(email.lower())
             new_accounts.append({
                 "email": email,
-                "password": parts[1].strip(),
-                "client_id": parts[2].strip(),
-                "refresh_token": parts[3].strip(),
+                "password": password,
+                "client_id": client_id,
+                "refresh_token": refresh_token,
             })
         else:
             errors.append(f"Line {i}: invalid format (expected 4 fields separated by '----')")
