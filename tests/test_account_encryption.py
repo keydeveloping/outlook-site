@@ -2,6 +2,7 @@ import os
 import sys
 import tempfile
 import unittest
+from io import BytesIO
 from pathlib import Path
 
 from cryptography.fernet import Fernet
@@ -157,6 +158,37 @@ class AccountEncryptionTest(unittest.TestCase):
         lines = [line for line in self.accounts_file.read_text().splitlines() if line and not line.startswith("#")]
         self.assertIn(bad_row, lines)
         self.assertEqual(len(lines), 2)
+
+    def test_upload_rejects_encrypted_account_rows_as_json(self):
+        encrypted_upload = "ENC:not-a-valid-token----password----client-id----refresh-token\n"
+
+        response = self._authenticated_client().post(
+            "/api/upload-accounts",
+            data={"file": (BytesIO(encrypted_upload.encode()), "accounts.txt"), "mode": "append"},
+            content_type="multipart/form-data",
+        )
+
+        self.assertEqual(response.content_type, "application/json")
+        self.assertEqual(response.status_code, 400)
+        body = response.get_json()
+        self.assertEqual(body["code"], "no_valid_accounts")
+        self.assertIn("encrypted", body["details"][0].lower())
+
+    def test_upload_mixed_file_skips_encrypted_rows(self):
+        encrypted_upload = "ENC:not-a-valid-token----password----client-id----refresh-token"
+        plaintext_upload = "bob@example.com----password----client-id----refresh-token"
+
+        response = self._authenticated_client().post(
+            "/api/upload-accounts",
+            data={"file": (BytesIO((encrypted_upload + "\n" + plaintext_upload).encode()), "accounts.txt"), "mode": "append"},
+            content_type="multipart/form-data",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.get_json()
+        self.assertEqual(body["added"], 1)
+        self.assertIn("encrypted", body["errors"][0].lower())
+        self.assertEqual(app.load_accounts()[0]["email"], "bob@example.com")
 
 
 if __name__ == "__main__":
