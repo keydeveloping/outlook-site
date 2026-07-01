@@ -496,7 +496,27 @@
                 document.getElementById('emailSubject').textContent = msg.subject || '(No subject)';
                 document.getElementById('emailFrom').textContent = 'From: ' + (msg.from?.emailAddress?.name || msg.from?.emailAddress?.address || 'Unknown');
                 document.getElementById('emailDate').textContent = new Date(msg.receivedDateTime).toLocaleString();
-                document.getElementById('emailBody').textContent = msg.body?.content || 'No content';
+
+                let bodyHtml = msg.body?.content || 'No content';
+                document.getElementById('emailBody').innerHTML = bodyHtml;
+
+                // Resolve inline images (cid: references → data: URLs)
+                try {
+                    const attRes = await fetch('/api/attachments/' + currentAccountIndex + '/' + messageId);
+                    const attData = await attRes.json();
+                    if (attData.success && attData.attachments) {
+                        for (const att of attData.attachments) {
+                            if (!att.isInline || !att.contentId || !att.contentBytes) continue;
+                            const cid = att.contentId.replace(/[<>]/g, '');
+                            const imgs = document.getElementById('emailBody').querySelectorAll('img[src="cid:' + cid + '"]');
+                            imgs.forEach(img => {
+                                img.src = 'data:' + (att.contentType || 'image/png') + ';base64,' + att.contentBytes;
+                            });
+                        }
+                    }
+                } catch (e) {
+                    // Attachment fetch failed — email body still shows, just without inline images
+                }
             } catch (err) {
                 document.getElementById('emailBody').innerHTML = '<div class="empty-state">Error loading email</div>';
             }

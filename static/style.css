@@ -486,6 +486,8 @@ body.api-keys-page {
     line-height: 1.7;
     color: #c9d1d9;
     max-width: 800px;
+    width: 100%;
+    margin: 0 auto;
     word-wrap: break-word;
     overflow-wrap: break-word;
 }

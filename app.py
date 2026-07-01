@@ -405,6 +405,18 @@ def fetch_message(access_token, message_id):
     return resp.json()
 
 
+def fetch_attachments(access_token, message_id):
+    url = f"https://graph.microsoft.com/v1.0/me/messages/{message_id}/attachments"
+    headers = {"Authorization": f"Bearer {access_token}"}
+    try:
+        resp = _http.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
+    except (requests.Timeout, requests.ConnectionError):
+        return None
+    if resp.status_code != 200:
+        return None
+    return resp.json().get("value", [])
+
+
 def fetch_inbox_for_account(account, top=50):
     token = get_access_token(account["client_id"], account["refresh_token"])
     if not token:
@@ -538,6 +550,35 @@ def api_message(account_index, message_id):
     if message is None:
         return json_error("Failed to fetch message", 502, "microsoft_message_failed")
     return json_success(message=message)
+
+
+@app.route("/api/attachments/<int:account_index>/<message_id>")
+@login_required
+def api_attachments(account_index, message_id):
+    accounts = load_accounts()
+    if account_index < 0 or account_index >= len(accounts):
+        return json_error("Invalid account index", 400, "invalid_account_index")
+    account = accounts[account_index]
+    token = get_access_token(account["client_id"], account["refresh_token"])
+    if not token:
+        return json_error("Failed to get access token", 502, "microsoft_token_failed")
+    attachments = fetch_attachments(token, message_id)
+    if attachments is None:
+        return json_error("Failed to fetch attachments", 502, "microsoft_attachments_failed")
+    result = []
+    for att in attachments:
+        item = {
+            "id": att.get("id"),
+            "name": att.get("name"),
+            "contentType": att.get("contentType"),
+            "isInline": att.get("isInline", False),
+            "contentId": att.get("contentId"),
+        }
+        if att.get("contentBytes"):
+            item["contentBytes"] = att["contentBytes"]
+        result.append(item)
+    return json_success(attachments=result)
+
 
 @app.route("/api/mark-read/<int:account_index>/<message_id>", methods=["PATCH"])
 @login_required
